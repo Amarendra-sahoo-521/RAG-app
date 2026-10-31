@@ -22,6 +22,9 @@ def load_and_split_pdf(
         docs = loader.load()
     finally:
         os.remove(tmp_path)
+    
+    for d in docs:
+        d.metadata["source"] = uploaded_file.name
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size, chunk_overlap=chunk_overlap

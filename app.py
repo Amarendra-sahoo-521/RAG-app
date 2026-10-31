@@ -16,8 +16,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "collection" not in st.session_state:
     st.session_state.collection = None
-if "processed_file_name" not in st.session_state:
-    st.session_state.processed_file_name = None
+if "processed_file_names" not in st.session_state:
+    st.session_state.processed_file_names = None
 
 # ---------------------------------------------------------------------------
 # Sidebar: theme + config + upload
@@ -36,25 +36,40 @@ with st.sidebar:
 
     st.divider()
 
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    uploaded_files = st.file_uploader("Upload a PDF", type=["pdf"], accept_multiple_files=True)
     top_k = st.slider("Chunks to retrieve (top-k)", min_value=1, max_value=10, value=DEFAULT_TOP_K)
-
-    if uploaded_file is not None and uploaded_file.name != st.session_state.processed_file_name:
-        with st.spinner("Reading, chunking, and embedding your PDF..."):
+    current_file_names = sorted(f.name for f in uploaded_files) if uploaded_files else []
+    
+    if uploaded_files and current_file_names != st.session_state.processed_file_names:
+        with st.spinner("Reading, chunking, and embedding your {len(uploaded_files)} PDF(s)..."):
             embedder = load_embedder()
-            chunks = load_and_split_pdf(uploaded_file)
             client = get_chroma_client()
+            
             if st.session_state.collection is not None:
                 delete_collection(client, st.session_state.collection.name)
-            collection = build_vector_store(chunks, embedder, client)
+                
+            all_chunks = []
+            for f in uploaded_files:
+                all_chunks.extend(load_and_split_pdf(f))
+            
+            collection = build_vector_store(all_chunks, embedder, client)
 
         st.session_state.collection = collection
-        st.session_state.processed_file_name = uploaded_file.name
+        st.session_state.processed_file_names = current_file_names
         st.session_state.messages = []  # reset chat when a new PDF is loaded
-        st.success(f"Indexed {len(chunks)} chunks from '{uploaded_file.name}'")
-
-    if st.session_state.processed_file_name:
-        st.caption(f"Active document: **{st.session_state.processed_file_name}**")
+        st.success(f"Indexed {len(all_chunks)} chunks from {len(uploaded_files)} file(s)")
+        
+    elif not uploaded_files and st.session_state.processed_file_names:
+        # user cleared the uploader — clean up the old collection too
+        client = get_chroma_client()
+        if st.session_state.collection is not None:
+            delete_collection(client, st.session_state.collection.name)
+        st.session_state.collection = None
+        st.session_state.processed_file_names = []
+        st.session_state.messages = []
+        
+    if st.session_state.processed_file_names:
+        st.caption(f"Active document: **{st.session_state.processed_file_names}**")
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +119,8 @@ if question:
 
             with st.expander("Sources used"):
                 for text, meta in context_chunks:
+                    source = meta.get("source", "unknown")
                     page = meta.get("page_label", meta.get("page", "?"))
-                    st.markdown(f"**Page {page}:** {text[:300]}...")
+                    st.markdown(f"**{source}, page {page}:** {text[:300]}...")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
